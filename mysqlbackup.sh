@@ -59,7 +59,7 @@ if [[ "${NUM_TABLES}" -eq "0" ]]; then
   echo "Backup ended:" $ENDDATE >> ${MAIL_FILE}
   echo " " >> ${MAIL_FILE}
   echo "No changes since last backup!" >> ${MAIL_FILE}
-  cat  ${MAIL_FILE} | mail -s "mysqlbackup.sh: ${BCK_TYPE} backup completed" github.contact@paapereira.com
+  cat  ${MAIL_FILE} | mail -s "mysqlbackup.sh: ${BCK_TYPE} backup completed" mysqlbackup@lofspot.net
   rm ${MAIL_FILE}
 
   unset PASSPHRASE
@@ -176,7 +176,7 @@ echo "Archived tables:" >> ${MAIL_FILE}
 cat ${BASE_DIR}/diff.md5 >> ${MAIL_FILE}
 echo " " >> ${MAIL_FILE} 
 cat $LOG >> ${MAIL_FILE} 
-cat  ${MAIL_FILE} | mail -s "mysqlbackup.sh: ${BCK_TYPE} backup completed" github.contact@paapereira.com
+cat  ${MAIL_FILE} | mail -s "mysqlbackup.sh: ${BCK_TYPE} backup completed" mysqlbackup@lofspot.net
 
 rm ${MAIL_FILE}
 rm ${BASE_DIR}/existing.dbs
