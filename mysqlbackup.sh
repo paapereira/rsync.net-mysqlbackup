@@ -18,7 +18,7 @@
 #    along with this program in the file LICENSE.  If not, see 
 #    <http://www.gnu.org/licenses/>.
 #
-# =================
+#===============================================================================
 #
 #    DESCRIPTION:
 #       This script is intended to backup mysql databases using rsync.net 
@@ -54,8 +54,13 @@ echo " " >> ${log}
 
 # backup databases
 
-# --- CHANGE THIS (one line for each database)
-mysqlhotcopy -u ${mysqlusr} -p ${mysqlpwd} mydatabase ${mysqlbckdir} --allowold --keepold >> ${log}
+while read line; do
+  # ignore comments
+  if ! [[ "${line:0:1}" = "#" ]] ; then
+    db=${line}
+    mysqlhotcopy -u ${mysqlusr} -p ${mysqlpwd} ${db} ${mysqlbckdir} --allowold --keepold >> ${log}
+  fi
+done < ${configdir}/mysqlbackuplist.conf
 
 
 echo " " >> ${log}
