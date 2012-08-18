@@ -1,47 +1,72 @@
 #!/bin/bash
 
-###############################################################
-# mysqlbackup.sh
+#===============================================================================
 #
-# Parameters:
-#   $1 - backup type ( full | inc )
+#    Author: Paulo Pereira <mysqlbackup@lofspot.net>
 #
-# example: mysqlbackup.sh
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
 #
-###############################################################
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program in the file LICENSE.  If not, see 
+#    <http://www.gnu.org/licenses/>.
+#
+# =================
+#
+#    DESCRIPTION:
+#       This script is intended to backup mysql databases using rsync.net 
+#       offsite backup infrastructure
+#
+#    PARAMETERS:
+#       $1 - backup type ( full | inc )
+#
+#    EXAMPLE:
+#       mysqlbackup.sh inc
+#
+#===============================================================================
 
-# get config variables
+# config files
 runningscript=`basename "$0"`
-basedir=`echo "$0" | awk -F"$runningscript" '{ print $1 }'`
-configdir=$basedir/config
-. $configdir/mysqlbackup.conf
-
-INITDATE=`date "+%Y-%m-%d %H:%M:%S"`
-
+basedir=`echo "$0" | awk -F"${runningscript}" '{ print $1 }'`
+configdir=${basedir}/config
+. ${configdir}/mysqlbackup.conf
+. ${configdir}/mysql.conf
+. ${configdir}/rsync.net.conf
 
 # backup type
-BCK_TYPE=$1
+bcktype=$1
 
-echo "============================================" > $LOG
-echo "=== BACKING UP MYSQL DATABASES" >> $LOG
-echo " " >> $LOG
+# initial date
+initdate=`date "+%Y-%m-%d %H:%M:%S"`
+
+
+echo "============================================" > ${log}
+echo "=== BACKING UP MYSQL DATABASES" >> ${log}
+echo " " >> ${log}
 
 
 # backup databases
 
 # --- CHANGE THIS (one line for each database)
-mysqlhotcopy -u ${MYSQL_USER} -p ${MYSQL_PASS} mydatabase ${MYSQL_BCK_DIR} --allowold --keepold >> $LOG
+mysqlhotcopy -u ${mysqlusr} -p ${mysqlpwd} mydatabase ${mysqlbckdir} --allowold --keepold >> ${log}
 
 
-echo " " >> $LOG
-echo "============================================" >> $LOG
-echo "=== CHECK FOR CHANGES IN DATABASES  " >> $LOG
-echo " " >> $LOG
+echo " " >> ${log}
+echo "============================================" >> ${log}
+echo "=== CHECK FOR CHANGES IN DATABASES  " >> ${log}
+echo " " >> ${log}
 
 # check for changes in databases
 
-md5sum ${MYSQL_BCK_DIR}/*/* | grep -v _old | sort -k2 > ${BASE_DIR}/latest.md5
-md5sum ${MYSQL_BCK_DIR}/*/* | grep _old | sort -k2 | sed 's/_old//g' > ${BASE_DIR}/old.md5
+md5sum ${mysqlbckdir}/*/* | grep -v _old | sort -k2 > ${BASE_DIR}/latest.md5
+md5sum ${mysqlbckdir}/*/* | grep _old | sort -k2 | sed 's/_old//g' > ${BASE_DIR}/old.md5
 diff ${BASE_DIR}/old.md5 ${BASE_DIR}/latest.md5 | grep "< " | awk -F"< " '{ print $2 }' | awk '{ print $2 }' > ${BASE_DIR}/diff.md5
 
 NUM_TABLES=`wc -l ${BASE_DIR}/diff.md5`
@@ -55,11 +80,11 @@ if [[ "${NUM_TABLES}" -eq "0" ]]; then
   MAIL_FILE=${BASE_DIR}/tmp.mail
   ENDDATE=`date "+%Y-%m-%d %H:%M:%S"`
 
-  echo "Backup started:" $INITDATE > ${MAIL_FILE}
+  echo "Backup started:" $initdate > ${MAIL_FILE}
   echo "Backup ended:" $ENDDATE >> ${MAIL_FILE}
   echo " " >> ${MAIL_FILE}
   echo "No changes since last backup!" >> ${MAIL_FILE}
-  cat  ${MAIL_FILE} | mail -s "mysqlbackup.sh: ${BCK_TYPE} backup completed" mysqlbackup@lofspot.net
+  cat  ${MAIL_FILE} | mail -s "mysqlbackup.sh: ${bcktype} backup completed" mysqlbackup@lofspot.net
   rm ${MAIL_FILE}
 
   unset PASSPHRASE
@@ -69,18 +94,18 @@ fi
 
 # copy latest tables
 
-cd ${MYSQL_BCK_DIR}
+cd ${mysqlbckdir}
 rsync \
   --verbose --recursive --times --perms --links --archive --checksum \
   --update --delete --delete-excluded \
   --exclude="*_old" \
   * \
-  ${BCK_LATEST} >> $LOG
+  ${latestbckdir} >> ${log}
 cd -
 
 # copy changed tables
 
-rm -Rf ${BCK_DIFF}/*
+rm -Rf ${diffbckdir}/*
 
 X=0
 
@@ -90,67 +115,67 @@ do
   let X=X+1
 
   TABLE=`head -n $X ${BASE_DIR}/diff.md5 | tail -n 1`
-  cp ${TABLE} ${BCK_DIFF}
+  cp ${TABLE} ${diffbckdir}
 
 done
 
 # tar changed tables
 
-tar -cvf ${BCK_ARCHIVE}/mysqlbackup.`date "+%Y%m%d.%H%M%S"`.tar ${BCK_DIFF}* >> $LOG
+tar -cvf ${archivebckdir}/mysqlbackup.`date "+%Y%m%d.%H%M%S"`.tar ${diffbckdir}* >> ${log}
 
 # remove older backups
 
-find ${BCK_ARCHIVE}/mysqlbackup.*.tar -mtime +120 -exec rm {} \;
+find ${archivebckdir}/mysqlbackup.*.tar -mtime +120 -exec rm {} \;
 
 
-echo " " >> $LOG
-echo "============================================" >> $LOG
-echo "=== RSYNC.NET: CURRENT BACKUP " >> $LOG
-echo " " >> $LOG
+echo " " >> ${log}
+echo "============================================" >> ${log}
+echo "=== RSYNC.NET: CURRENT BACKUP " >> ${log}
+echo " " >> ${log}
 
 # current rsync.net backup
 
-echo " " >> $LOG
-echo "---> cleanup: `date "+%Y-%m-%d %H:%M:%S"`" >> $LOG
-duplicity cleanup -v4 --encrypt-key="${RSYNC_PUB_KEY}" ${RSYNC_DIR} >> $LOG
-echo " " >> $LOG
-echo "---> remove older backups: `date "+%Y-%m-%d %H:%M:%S"`" >> $LOG
-duplicity remove-older-than 120D --force -v4 --encrypt-key="${RSYNC_PUB_KEY}" ${RSYNC_DIR} >> $LOG
-echo " " >> $LOG
-echo "---> backup: `date "+%Y-%m-%d %H:%M:%S"`" >> $LOG
-duplicity ${BCK_TYPE} --encrypt-key="${RSYNC_PUB_KEY}" ${BCK_LATEST} ${RSYNC_DIR} >> $LOG
-echo " " >> $LOG
-echo "---> verify: `date "+%Y-%m-%d %H:%M:%S"`" >> $LOG
-duplicity verify --encrypt-key="${RSYNC_PUB_KEY}" ${RSYNC_DIR} ${BCK_LATEST} >> $LOG
+echo " " >> ${log}
+echo "---> cleanup: `date "+%Y-%m-%d %H:%M:%S"`" >> ${log}
+duplicity cleanup -v4 --encrypt-key="${pubkey}" ${rsyncnetlatestbckdir} >> ${log}
+echo " " >> ${log}
+echo "---> remove older backups: `date "+%Y-%m-%d %H:%M:%S"`" >> ${log}
+duplicity remove-older-than 120D --force -v4 --encrypt-key="${pubkey}" ${rsyncnetlatestbckdir} >> ${log}
+echo " " >> ${log}
+echo "---> backup: `date "+%Y-%m-%d %H:%M:%S"`" >> ${log}
+duplicity ${bcktype} --encrypt-key="${pubkey}" ${latestbckdir} ${rsyncnetlatestbckdir} >> ${log}
+echo " " >> ${log}
+echo "---> verify: `date "+%Y-%m-%d %H:%M:%S"`" >> ${log}
+duplicity verify --encrypt-key="${pubkey}" ${rsyncnetlatestbckdir} ${latestbckdir} >> ${log}
 
 
 # archived rsync.net backups
 
-echo " " >> $LOG
-echo "============================================" >> $LOG
-echo "=== RSYNC.NET: ARCHIVE " >> $LOG
-echo " " >> $LOG
+echo " " >> ${log}
+echo "============================================" >> ${log}
+echo "=== RSYNC.NET: ARCHIVE " >> ${log}
+echo " " >> ${log}
 
-echo " " >> $LOG
-echo "---> cleanup: `date "+%Y-%m-%d %H:%M:%S"`" >> $LOG
-duplicity cleanup -v4 --encrypt-key="${RSYNC_PUB_KEY}" ${RSYNC_DIR_ARCHIVE} >> $LOG
-echo " " >> $LOG
-echo "---> remove older backups: `date "+%Y-%m-%d %H:%M:%S"`" >> $LOG
-duplicity remove-older-than 120D --force -v4 --encrypt-key="${RSYNC_PUB_KEY}" ${RSYNC_DIR_ARCHIVE} >> $LOG
-echo " " >> $LOG
-echo "---> backup: `date "+%Y-%m-%d %H:%M:%S"`" >> $LOG
-duplicity ${BCK_TYPE} --encrypt-key="${RSYNC_PUB_KEY}" ${BCK_ARCHIVE} ${RSYNC_DIR_ARCHIVE} >> $LOG
-if [[ "${BCK_TYPE}" = "full" ]]; then 
-  echo " " >> $LOG
-  echo "---> verify: `date "+%Y-%m-%d %H:%M:%S"`" >> $LOG
-  duplicity verify --encrypt-key="${RSYNC_PUB_KEY}" ${RSYNC_DIR_ARCHIVE} ${BCK_ARCHIVE} >> $LOG
+echo " " >> ${log}
+echo "---> cleanup: `date "+%Y-%m-%d %H:%M:%S"`" >> ${log}
+duplicity cleanup -v4 --encrypt-key="${pubkey}" ${rsyncnetlatestbckdir_ARCHIVE} >> ${log}
+echo " " >> ${log}
+echo "---> remove older backups: `date "+%Y-%m-%d %H:%M:%S"`" >> ${log}
+duplicity remove-older-than 120D --force -v4 --encrypt-key="${pubkey}" ${rsyncnetlatestbckdir_ARCHIVE} >> ${log}
+echo " " >> ${log}
+echo "---> backup: `date "+%Y-%m-%d %H:%M:%S"`" >> ${log}
+duplicity ${bcktype} --encrypt-key="${pubkey}" ${archivebckdir} ${rsyncnetlatestbckdir_ARCHIVE} >> ${log}
+if [[ "${bcktype}" = "full" ]]; then 
+  echo " " >> ${log}
+  echo "---> verify: `date "+%Y-%m-%d %H:%M:%S"`" >> ${log}
+  duplicity verify --encrypt-key="${pubkey}" ${rsyncnetlatestbckdir_ARCHIVE} ${archivebckdir} >> ${log}
 fi
 
 
 # compare existing databases with backed up databases
 
 find /var/lib/mysql/ -maxdepth 1 -type d | sed 's|/var/lib/mysql/||g' | sed '/^$/d' | sort > ${BASE_DIR}/existing.dbs
-find ${MYSQL_BCK_DIR} -maxdepth 1 -type d | sed 's|/backup/hotcopy/||g'| sed 's|/backup/hotcopy||g' | grep -v _old | sed '/^$/d' | sort > ${BASE_DIR}/backups.dbs
+find ${mysqlbckdir} -maxdepth 1 -type d | sed 's|/backup/hotcopy/||g'| sed 's|/backup/hotcopy||g' | grep -v _old | sed '/^$/d' | sort > ${BASE_DIR}/backups.dbs
 diff ${BASE_DIR}/existing.dbs ${BASE_DIR}/backups.dbs > ${BASE_DIR}/diff.dbs
 
 # send mail
@@ -158,7 +183,7 @@ diff ${BASE_DIR}/existing.dbs ${BASE_DIR}/backups.dbs > ${BASE_DIR}/diff.dbs
 MAIL_FILE=${BASE_DIR}/tmp.mail
 ENDDATE=`date "+%Y-%m-%d %H:%M:%S"`
 
-echo "Backup started:" $INITDATE > ${MAIL_FILE} 
+echo "Backup started:" $initdate > ${MAIL_FILE} 
 echo "Backup ended:" $ENDDATE >> ${MAIL_FILE} 
 echo " " >> ${MAIL_FILE} 
 ssh 00000@server.rsync.net quota >> ${MAIL_FILE} 
@@ -175,8 +200,8 @@ echo " " >> ${MAIL_FILE}
 echo "Archived tables:" >> ${MAIL_FILE}
 cat ${BASE_DIR}/diff.md5 >> ${MAIL_FILE}
 echo " " >> ${MAIL_FILE} 
-cat $LOG >> ${MAIL_FILE} 
-cat  ${MAIL_FILE} | mail -s "mysqlbackup.sh: ${BCK_TYPE} backup completed" mysqlbackup@lofspot.net
+cat ${log} >> ${MAIL_FILE} 
+cat  ${MAIL_FILE} | mail -s "mysqlbackup.sh: ${bcktype} backup completed" mysqlbackup@lofspot.net
 
 rm ${MAIL_FILE}
 rm ${BASE_DIR}/existing.dbs
