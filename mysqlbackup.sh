@@ -51,7 +51,6 @@ echo "============================================" > ${log}
 echo "=== BACKING UP MYSQL DATABASES" >> ${log}
 echo " " >> ${log}
 
-
 # backup databases
 
 while read line; do
@@ -70,27 +69,28 @@ echo " " >> ${log}
 
 # check for changes in databases
 
-md5sum ${mysqlbckdir}/*/* | grep -v _old | sort -k2 > ${BASE_DIR}/latest.md5
-md5sum ${mysqlbckdir}/*/* | grep _old | sort -k2 | sed 's/_old//g' > ${BASE_DIR}/old.md5
-diff ${BASE_DIR}/old.md5 ${BASE_DIR}/latest.md5 | grep "< " | awk -F"< " '{ print $2 }' | awk '{ print $2 }' > ${BASE_DIR}/diff.md5
+md5sum ${mysqlbckdir}/*/* | grep -v _old | sort -k2 > ${localbackupbasedir}/latest.md5
+md5sum ${mysqlbckdir}/*/* | grep _old | sort -k2 | sed 's/_old//g' > ${localbackupbasedir}/old.md5
+diff ${localbackupbasedir}/old.md5 ${localbackupbasedir}/latest.md5 | grep "< " | awk -F"< " '{ print $2 }' | awk '{ print $2 }' > ${localbackupbasedir}/diff.md5
 
-NUM_TABLES=`wc -l ${BASE_DIR}/diff.md5`
-Y=`expr "$NUM_TABLES" : '\([0-9]*\)'`
-NUM_TABLES=$Y
+difftablesnum=`wc -l ${localbackupbasedir}/diff.md5`
+Y=`expr "$difftablesnum" : '\([0-9]*\)'`
+difftablesnum=$Y
 
 # end if there are no diff tables to backup
+# if it's a full backup it continues
 
-if [[ "${NUM_TABLES}" -eq "0" ]]; then
+if [[ "${difftablesnum}" -eq "0" && "${bcktype}" = "inc" ]]; then
 
-  MAIL_FILE=${BASE_DIR}/tmp.mail
-  ENDDATE=`date "+%Y-%m-%d %H:%M:%S"`
+  mailfile=${localbackupbasedir}/tmp.mail
+  enddate=`date "+%Y-%m-%d %H:%M:%S"`
 
-  echo "Backup started:" $initdate > ${MAIL_FILE}
-  echo "Backup ended:" $ENDDATE >> ${MAIL_FILE}
-  echo " " >> ${MAIL_FILE}
-  echo "No changes since last backup!" >> ${MAIL_FILE}
-  cat  ${MAIL_FILE} | mail -s "mysqlbackup.sh: ${bcktype} backup completed" mysqlbackup@lofspot.net
-  rm ${MAIL_FILE}
+  echo "Backup started:" ${initdate} > ${mailfile}
+  echo "Backup ended:" ${enddate} >> ${mailfile}
+  echo " " >> ${mailfile}
+  echo "No changes since last backup!" >> ${mailfile}
+  cat  ${mailfile} | mail -s "mysqlbackup.sh: ${bcktype} backup completed" ${email}
+  rm ${mailfile}
 
   unset PASSPHRASE
 
@@ -114,23 +114,25 @@ rm -Rf ${diffbckdir}/*
 
 X=0
 
-while [ "$X" -lt "${NUM_TABLES}" ]
+while [ "$X" -lt "${difftablesnum}" ]
 do
 
   let X=X+1
 
-  TABLE=`head -n $X ${BASE_DIR}/diff.md5 | tail -n 1`
+  TABLE=`head -n $X ${localbackupbasedir}/diff.md5 | tail -n 1`
   cp ${TABLE} ${diffbckdir}
 
 done
 
 # tar changed tables
 
-tar -cvf ${archivebckdir}/mysqlbackup.`date "+%Y%m%d.%H%M%S"`.tar ${diffbckdir}* >> ${log}
+if [[ "${difftablesnum}" -gt "0" ]]; then
+  tar -cvf ${archivebckdir}/mysqlbackup.`date "+%Y%m%d.%H%M%S"`.tar ${diffbckdir}* >> ${log}
+fi
 
 # remove older backups
 
-find ${archivebckdir}/mysqlbackup.*.tar -mtime +120 -exec rm {} \;
+find ${archivebckdir}/mysqlbackup.*.tar -mtime +${localarchivekeep} -exec rm {} \;
 
 
 echo " " >> ${log}
@@ -145,7 +147,7 @@ echo "---> cleanup: `date "+%Y-%m-%d %H:%M:%S"`" >> ${log}
 duplicity cleanup -v4 --encrypt-key="${pubkey}" ${rsyncnetlatestbckdir} >> ${log}
 echo " " >> ${log}
 echo "---> remove older backups: `date "+%Y-%m-%d %H:%M:%S"`" >> ${log}
-duplicity remove-older-than 120D --force -v4 --encrypt-key="${pubkey}" ${rsyncnetlatestbckdir} >> ${log}
+duplicity remove-older-than ${rsyncnetlatestkeep}D --force -v4 --encrypt-key="${pubkey}" ${rsyncnetlatestbckdir} >> ${log}
 echo " " >> ${log}
 echo "---> backup: `date "+%Y-%m-%d %H:%M:%S"`" >> ${log}
 duplicity ${bcktype} --encrypt-key="${pubkey}" ${latestbckdir} ${rsyncnetlatestbckdir} >> ${log}
@@ -163,55 +165,55 @@ echo " " >> ${log}
 
 echo " " >> ${log}
 echo "---> cleanup: `date "+%Y-%m-%d %H:%M:%S"`" >> ${log}
-duplicity cleanup -v4 --encrypt-key="${pubkey}" ${rsyncnetlatestbckdir_ARCHIVE} >> ${log}
+duplicity cleanup -v4 --encrypt-key="${pubkey}" ${rsyncnetarchivedir} >> ${log}
 echo " " >> ${log}
 echo "---> remove older backups: `date "+%Y-%m-%d %H:%M:%S"`" >> ${log}
-duplicity remove-older-than 120D --force -v4 --encrypt-key="${pubkey}" ${rsyncnetlatestbckdir_ARCHIVE} >> ${log}
+duplicity remove-older-than ${rsyncnetarchivekeep}D --force -v4 --encrypt-key="${pubkey}" ${rsyncnetarchivedir} >> ${log}
 echo " " >> ${log}
 echo "---> backup: `date "+%Y-%m-%d %H:%M:%S"`" >> ${log}
-duplicity ${bcktype} --encrypt-key="${pubkey}" ${archivebckdir} ${rsyncnetlatestbckdir_ARCHIVE} >> ${log}
+duplicity ${bcktype} --encrypt-key="${pubkey}" ${archivebckdir} ${rsyncnetarchivedir} >> ${log}
 if [[ "${bcktype}" = "full" ]]; then 
   echo " " >> ${log}
   echo "---> verify: `date "+%Y-%m-%d %H:%M:%S"`" >> ${log}
-  duplicity verify --encrypt-key="${pubkey}" ${rsyncnetlatestbckdir_ARCHIVE} ${archivebckdir} >> ${log}
+  duplicity verify --encrypt-key="${pubkey}" ${rsyncnetarchivedir} ${archivebckdir} >> ${log}
 fi
 
 
 # compare existing databases with backed up databases
 
-find /var/lib/mysql/ -maxdepth 1 -type d | sed 's|/var/lib/mysql/||g' | sed '/^$/d' | sort > ${BASE_DIR}/existing.dbs
-find ${mysqlbckdir} -maxdepth 1 -type d | sed 's|/backup/hotcopy/||g'| sed 's|/backup/hotcopy||g' | grep -v _old | sed '/^$/d' | sort > ${BASE_DIR}/backups.dbs
-diff ${BASE_DIR}/existing.dbs ${BASE_DIR}/backups.dbs > ${BASE_DIR}/diff.dbs
+find ${mysqldir} -maxdepth 1 -type d | sed "s|${mysqldir}||g" | sed '/^$/d' | sort > ${localbackupbasedir}/existing.dbs
+find ${mysqlbckdir} -maxdepth 1 -type d | sed "s|${mysqlbckdir}/||g" | sed "s|${mysqlbckdir}||g" | grep -v _old | sed '/^$/d' | sort > ${localbackupbasedir}/backups.dbs
+diff ${localbackupbasedir}/existing.dbs ${localbackupbasedir}/backups.dbs > ${localbackupbasedir}/diff.dbs
 
 # send mail
 
-MAIL_FILE=${BASE_DIR}/tmp.mail
-ENDDATE=`date "+%Y-%m-%d %H:%M:%S"`
+mailfile=${localbackupbasedir}/tmp.mail
+enddate=`date "+%Y-%m-%d %H:%M:%S"`
 
-echo "Backup started:" $initdate > ${MAIL_FILE} 
-echo "Backup ended:" $ENDDATE >> ${MAIL_FILE} 
-echo " " >> ${MAIL_FILE} 
-ssh 00000@server.rsync.net quota >> ${MAIL_FILE} 
-echo " " >> ${MAIL_FILE} 
-echo "Existing databases:" >> ${MAIL_FILE} 
-cat ${BASE_DIR}/existing.dbs >> ${MAIL_FILE} 
-echo " " >> ${MAIL_FILE} 
-echo "Backed up databases:" >> ${MAIL_FILE}
-cat ${BASE_DIR}/backups.dbs >> ${MAIL_FILE} 
-echo " " >> ${MAIL_FILE} 
-echo "----> NOT backed up databases:" >> ${MAIL_FILE} 
-cat ${BASE_DIR}/diff.dbs >> ${MAIL_FILE} 
-echo " " >> ${MAIL_FILE}
-echo "Archived tables:" >> ${MAIL_FILE}
-cat ${BASE_DIR}/diff.md5 >> ${MAIL_FILE}
-echo " " >> ${MAIL_FILE} 
-cat ${log} >> ${MAIL_FILE} 
-cat  ${MAIL_FILE} | mail -s "mysqlbackup.sh: ${bcktype} backup completed" mysqlbackup@lofspot.net
+echo "Backup started:" ${initdate} > ${mailfile} 
+echo "Backup ended:" ${enddate} >> ${mailfile} 
+echo " " >> ${mailfile}
+ssh ${rsyncnetserver} quota >> ${mailfile} 
+echo " " >> ${mailfile} 
+echo "Existing databases:" >> ${mailfile} 
+cat ${localbackupbasedir}/existing.dbs >> ${mailfile} 
+echo " " >> ${mailfile} 
+echo "Backed up databases:" >> ${mailfile}
+cat ${localbackupbasedir}/backups.dbs >> ${mailfile} 
+echo " " >> ${mailfile} 
+echo "----> NOT backed up databases:" >> ${mailfile} 
+cat ${localbackupbasedir}/diff.dbs >> ${mailfile} 
+echo " " >> ${mailfile}
+echo "Archived tables:" >> ${mailfile}
+cat ${localbackupbasedir}/diff.md5 >> ${mailfile}
+echo " " >> ${mailfile} 
+cat ${log} >> ${mailfile} 
+cat ${mailfile} | mail -s "mysqlbackup.sh: ${bcktype} backup completed" ${email}
 
-rm ${MAIL_FILE}
-rm ${BASE_DIR}/existing.dbs
-rm ${BASE_DIR}/backups.dbs
-rm ${BASE_DIR}/diff.dbs 
+rm ${mailfile}
+rm ${localbackupbasedir}/existing.dbs
+rm ${localbackupbasedir}/backups.dbs
+rm ${localbackupbasedir}/diff.dbs 
 
 unset PASSPHRASE
 
